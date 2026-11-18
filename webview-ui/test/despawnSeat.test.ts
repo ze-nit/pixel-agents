@@ -85,10 +85,10 @@ test('a new agent can take the seat a departing agent left', () => {
   assert.equal(os.characters.get(3)!.seatId, 'a');
 });
 
-test('a layout rebuild never seats a helper', () => {
-  // Helpers have no chair: they stand by their lead (helperFollow.test.ts).
-  // The rebuild's second pass gave every unseated character a free seat,
-  // helpers included, so they took the chairs new agents needed.
+test('a layout rebuild seats a helper at its own workstation', () => {
+  // Helpers used to stand by their lead with no chair of their own. They now
+  // get a real workstation like every other agent, so a rebuild hands them the
+  // free seat nearest their lead's and leaves the other one for a new agent.
   const layout = layoutWithChairs();
   const os = new OfficeState(layout);
   os.addAgent(1, undefined, undefined, 'a', true);
@@ -96,6 +96,6 @@ test('a layout rebuild never seats a helper', () => {
 
   os.rebuildFromLayout(layout);
 
-  assert.equal(os.characters.get(helper)!.seatId, null);
-  assert.equal(os.seats.get('b')!.assigned, false);
+  assert.equal(os.characters.get(helper)!.seatId, 'b');
+  assert.equal(os.seats.get('b')!.assigned, true);
 });

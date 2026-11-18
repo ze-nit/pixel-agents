@@ -47,7 +47,7 @@ import { anchorTile, closestFreeSeat } from './seatPlacement.js';
 /** Whether a character sits in a chair: helpers stand by their lead, and a
  *  departing character is leaving. */
 function takesSeat(ch: Character): boolean {
-  return !ch.isSubagent && ch.matrixEffect !== 'despawn';
+  return ch.matrixEffect !== 'despawn';
 }
 
 type Tile = { col: number; row: number };
@@ -782,23 +782,40 @@ export class OfficeState {
     const palette = parentCh ? parentCh.palette : 0;
     const repeat = parentCh ? parentCh.repeat : 0;
 
-    // Spawn on the free walkable tile closest to the parent's seat (or to the
-    // parent, when it has none) — where the helper will stay.
-    const home = anchorTile(parentCh, this.seats) ?? { col: 0, row: 0 };
-    let spawn = home;
-    if (this.walkableTiles.length > 0) {
-      spawn =
-        this.closestTile(this.takenTiles({ plus: home }), ringsAround(home)) ??
-        this.walkableTiles[0];
+    // Assign the sub-agent its own real workstation, like any other agent.
+    const anchor = anchorTile(parentCh, this.seats);
+    let seatId: string | null = null;
+    if (anchor) {
+      seatId = closestFreeSeat(this.seats, anchor.col, anchor.row);
+    }
+    if (!seatId) {
+      seatId = this.findFreeSeat(parentCh?.directoryName);
     }
 
-    const ch = createCharacter(id, palette, null, null, repeat);
-    ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
-    ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
-    ch.tileCol = spawn.col;
-    ch.tileRow = spawn.row;
-    // Face the same direction as the parent agent
-    ch.dir = this.helperFacing(parentCh) ?? ch.dir;
+    let ch: Character;
+    if (seatId) {
+      const seat = this.seats.get(seatId)!;
+      seat.assigned = true;
+      ch = createCharacter(id, palette, seatId, seat, repeat);
+    } else {
+      // No free workstation: spawn beside the lead (the old helper behaviour),
+      // not on a fake chair. `updateHelper` keeps it there.
+      const home = anchor ?? { col: 0, row: 0 };
+      let spawn = home;
+      if (this.walkableTiles.length > 0) {
+        spawn =
+          this.closestTile(this.takenTiles({ plus: home }), ringsAround(home)) ??
+          this.walkableTiles[0];
+      }
+      ch = createCharacter(id, palette, null, null, repeat);
+      ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
+      ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
+      ch.tileCol = spawn.col;
+      ch.tileRow = spawn.row;
+    }
+    // A seated sub-agent faces its chair (createCharacter already set seat.facingDir).
+    // Only a seatless helper follows its lead's direction.
+    if (!ch.seatId) ch.dir = this.helperFacing(parentCh) ?? ch.dir;
     ch.isSubagent = true;
     ch.parentAgentId = parentAgentId;
     const spot = this.resyncSubagentSpots.get(key);
@@ -1218,10 +1235,8 @@ export class OfficeState {
         continue; // skip normal FSM while the effect is (or just was) active
       }
 
-      if (ch.isSubagent) {
+      if (ch.isSubagent && !ch.seatId) {
         const lead = ch.parentAgentId !== null ? this.characters.get(ch.parentAgentId) : undefined;
-        // Helpers gather around the lead's seat, not the lead: an idle lead
-        // wanders, and its helpers should not trail it around the office.
         const home = anchorTile(lead, this.seats) ?? null;
         updateHelper(
           ch,
